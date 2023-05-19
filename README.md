@@ -20,7 +20,7 @@ It supports various storage services including:
 ## Installation
 
 ```bash
-go get github.com/flowshot-io/polyStore
+go get github.com/flowshot-io/polystore
 ```
 
 ## Usage
@@ -29,10 +29,10 @@ First, import the storage backends you want to use:
 
 ```go
 import (
-    _ "github.com/flowshot-io/polyStore/pkg/services/fs"
-    _ "github.com/flowshot-io/polyStore/pkg/services/s3"
+    _ "github.com/flowshot-io/polystore/pkg/services/fs"
+    _ "github.com/flowshot-io/polystore/pkg/services/s3"
 
-    "github.com/flowshot-io/polyStore/pkg/services"
+    "github.com/flowshot-io/polystore/pkg/services"
 )
 ```
 
