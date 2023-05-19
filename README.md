@@ -29,8 +29,8 @@ First, import the storage backends you want to use:
 
 ```go
 import (
-	_ "github.com/flowshot-io/polyStore/pkg/services/fs"
-	_ "github.com/flowshot-io/polyStore/pkg/services/s3"
+    _ "github.com/flowshot-io/polyStore/pkg/services/fs"
+    _ "github.com/flowshot-io/polyStore/pkg/services/s3"
 
     "github.com/flowshot-io/polyStore/pkg/services"
 )
