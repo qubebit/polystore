@@ -9,8 +9,8 @@ PolyStore is a flexible and extensible Go library for unifying and abstracting d
 
 It supports various storage services including:
 
-- [Amazon S3 and compatible services](./pkg/storage/services/s3/README.md)
-- [Local filesystem](./pkg/storage/services/fs/README.md)
+- [Amazon S3 and compatible services](./pkg/services/s3/README.md)
+- [Local filesystem](./pkg/services/fs/README.md)
 
 ## Features
 
@@ -29,10 +29,10 @@ First, import the storage backends you want to use:
 
 ```go
 import (
-	_ "github.com/flowshot-io/polyStore/pkg/storage/services/fs"
-	_ "github.com/flowshot-io/polyStore/pkg/storage/services/s3"
+	_ "github.com/flowshot-io/polyStore/pkg/services/fs"
+	_ "github.com/flowshot-io/polyStore/pkg/services/s3"
 
-    "github.com/flowshot-io/polyStore/pkg/storage/services"
+    "github.com/flowshot-io/polyStore/pkg/services"
 )
 ```
 
