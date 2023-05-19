@@ -42,7 +42,7 @@ Then, you can create a storage instance using a connection string:
 connectionString := "s3://myBucketName/my/prefix?endpoint=s3.amazonaws.com&region=region&accessKey=accessKey&secretKey=secretKey&sse=sse"
 storage, err := services.New(connectionString)
 if err != nil {
-	// handle error
+    // handle error
 }
 ```
 
