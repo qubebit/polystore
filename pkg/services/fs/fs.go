@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -71,19 +72,46 @@ func (fs *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types
 	return &objects, nil
 }
 
-func (fs *Backend) ReadWithContext(ctx context.Context, path string, writer io.Writer) (int64, error) {
+func (fs *Backend) ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
 
 	fullPath := filepath.Join(fs.Root, path)
-	content, err := os.OpenFile(fullPath, os.O_RDONLY, 0)
+	file, err := os.Open(fullPath)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer content.Close()
 
-	return io.Copy(writer, content)
+	// Check for end < 0, if end is less than 0 we read till the end of the file
+	if end < 0 {
+		content, err := io.ReadAll(file)
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
+
+		// Convert read bytes to a reader and then to an io.ReadCloser
+		return io.NopCloser(bytes.NewReader(content[start:])), nil
+	}
+
+	// Move to the start of the desired portion
+	_, err = file.Seek(start, 0)
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	// Read the desired number of bytes (end-start)
+	buf := make([]byte, end-start)
+	_, err = file.Read(buf)
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	// Convert read bytes to a reader and then to an io.ReadCloser
+	return io.NopCloser(bytes.NewReader(buf)), nil
 }
 
 func (fs *Backend) StatWithContext(ctx context.Context, path string) (*types.Object, error) {

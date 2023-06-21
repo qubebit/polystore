@@ -40,7 +40,7 @@ type (
 	// Backend is a generic interface for storage backends
 	Storage interface {
 		ListWithContext(ctx context.Context, prefix string) (*[]Object, error)
-		ReadWithContext(ctx context.Context, path string, writer io.Writer) (int64, error)
+		ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
 		WriteWithContext(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
 		StatWithContext(ctx context.Context, path string) (*Object, error)
 		DeleteWithContext(ctx context.Context, path string) error
