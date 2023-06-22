@@ -133,10 +133,17 @@ func (b *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types.
 
 // ReadWithContext reads an object from S3 bucket, at given path
 func (b *Backend) ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+	var rangeStr string
+	if end != 0 {
+		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
+	} else {
+		rangeStr = fmt.Sprintf("bytes=%d-", start)
+	}
+
 	s3Input := &s3.GetObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
-		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
+		Range:  aws.String(rangeStr),
 	}
 
 	s3Result, err := b.Client.GetObjectWithContext(ctx, s3Input)
