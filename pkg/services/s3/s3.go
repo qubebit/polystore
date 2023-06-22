@@ -17,6 +17,7 @@ import (
 	"github.com/flowshot-io/polystore/pkg/types"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
@@ -133,11 +134,9 @@ func (b *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types.
 
 // ReadWithContext reads an object from S3 bucket, at given path
 func (b *Backend) ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
-	var rangeStr string
+	rangeStr := fmt.Sprintf("bytes=%d-", start)
 	if end != 0 {
 		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
-	} else {
-		rangeStr = fmt.Sprintf("bytes=%d-", start)
 	}
 
 	s3Input := &s3.GetObjectInput{
@@ -148,7 +147,12 @@ func (b *Backend) ReadWithContext(ctx context.Context, path string, start int64,
 
 	s3Result, err := b.Client.GetObjectWithContext(ctx, s3Input)
 	if err != nil {
-		return nil, err
+		awsErr, ok := err.(awserr.Error)
+		if ok && awsErr.Code() == s3.ErrCodeNoSuchKey {
+			return nil, fmt.Errorf("no such key %s: %w", path, err)
+		}
+
+		return nil, fmt.Errorf("failed to get object with context: %w", err)
 	}
 
 	return s3Result.Body, nil
