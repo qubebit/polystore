@@ -11,14 +11,14 @@ import (
 	"os"
 	pathutil "path"
 	"path/filepath"
-	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/smithy-go"
 	"github.com/backdrop-run/polystore/pkg/helpers"
 	"github.com/backdrop-run/polystore/pkg/services"
 	"github.com/backdrop-run/polystore/pkg/types"
@@ -39,10 +39,10 @@ type (
 	// Backend is a storage backend for S3
 	Backend struct {
 		Bucket     string
-		Client     *s3.S3
-		Downloader *s3manager.Downloader
+		Client     *s3.Client
+		Downloader *manager.Downloader
 		Prefix     string
-		Uploader   *s3manager.Uploader
+		Uploader   *manager.Uploader
 		SSE        string
 	}
 )
@@ -66,7 +66,7 @@ func new(uri *url.URL) (types.Storage, error) {
 }
 
 func New(opts Options) (*Backend, error) {
-	credentials := NewCredentials(opts.AccessKey, opts.SecretKey)
+	credentials := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""))
 
 	client := http.DefaultClient
 	if os.Getenv("AWS_INSECURE_SKIP_VERIFY") == "true" {
@@ -75,25 +75,27 @@ func New(opts Options) (*Backend, error) {
 		}
 		client = &http.Client{Transport: tr}
 	}
-	sess, err := session.NewSession(&aws.Config{
-		HTTPClient:       client,
-		Credentials:      credentials,
-		Region:           aws.String(opts.Region),
-		Endpoint:         aws.String(opts.Endpoint),
-		DisableSSL:       aws.Bool(strings.HasPrefix(opts.Endpoint, "http://")),
-		S3ForcePathStyle: aws.Bool(opts.Endpoint != ""),
-	})
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithHTTPClient(client),
+		config.WithCredentialsProvider(credentials),
+		config.WithRegion(opts.Region),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: opts.Endpoint, SigningRegion: opts.Region}, nil
+			})),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	service := s3.New(sess)
+	service := s3.NewFromConfig(cfg)
 	return &Backend{
 		Bucket:     opts.BucketName,
 		Client:     service,
-		Downloader: s3manager.NewDownloaderWithClient(service),
+		Downloader: manager.NewDownloader(service),
 		Prefix:     helpers.CleanPrefix(opts.Prefix),
-		Uploader:   s3manager.NewUploaderWithClient(service),
+		Uploader:   manager.NewUploader(service),
 		SSE:        opts.SSE,
 	}, nil
 }
@@ -109,7 +111,7 @@ func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, err
 		Prefix: aws.String(prefix),
 	}
 
-	s3Result, err := b.Client.ListObjectsV2WithContext(ctx, s3Input)
+	s3Result, err := b.Client.ListObjectsV2(ctx, s3Input)
 	if err != nil {
 		return nil, err
 	}
@@ -142,10 +144,10 @@ func (b *Backend) Read(ctx context.Context, path string, start int64, end int64)
 		Range:  aws.String(rangeStr),
 	}
 
-	s3Result, err := b.Client.GetObjectWithContext(ctx, s3Input)
+	s3Result, err := b.Client.GetObject(ctx, s3Input)
 	if err != nil {
-		awsErr, ok := err.(awserr.Error)
-		if ok && awsErr.Code() == s3.ErrCodeNoSuchKey {
+		awsErr, ok := err.(smithy.APIError)
+		if ok && awsErr.ErrorCode() == ErrCodeNoSuchKey {
 			return nil, fmt.Errorf("no such key %s: %w", path, err)
 		}
 
@@ -162,7 +164,7 @@ func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) 
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
 	}
 
-	s3Result, err := b.Client.GetObjectWithContext(ctx, s3Input)
+	s3Result, err := b.Client.GetObject(ctx, s3Input)
 	if err != nil {
 		return nil, err
 	}
@@ -179,31 +181,31 @@ func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) 
 //
 // Always use this method if your full file is already on disk or in memory.
 func (b *Backend) Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
-	s3Input := &s3manager.UploadInput{
+	s3Input := &s3.PutObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
 		Body:   reader,
 	}
 
 	if b.SSE != "" {
-		s3Input.ServerSideEncryption = aws.String(b.SSE)
+		s3Input.ServerSideEncryption = s3types.ServerSideEncryption(b.SSE)
 	}
 
-	_, err := b.Uploader.UploadWithContext(ctx, s3Input)
+	_, err := b.Uploader.Upload(ctx, s3Input)
 	return size, err
 }
 
-// Delete removes an object from a S3 bucket, at prefix
+// DeleteObject removes an object from a S3 bucket, at prefix
 func (b *Backend) Delete(ctx context.Context, path string) error {
 	s3Input := &s3.DeleteObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
 	}
-	_, err := b.Client.DeleteObjectWithContext(ctx, s3Input)
+	_, err := b.Client.DeleteObject(ctx, s3Input)
 	return err
 }
 
-// Move moves an object from one path to another within a S3 bucket
+// MoveObject moves an object from one path to another within a S3 bucket
 func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) error {
 	// First, copy the source file to the destination path
 	copyInput := &s3.CopyObjectInput{
@@ -212,10 +214,10 @@ func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) erro
 		Key:        aws.String(pathutil.Join(b.Prefix, toPath)),
 	}
 	if b.SSE != "" {
-		copyInput.ServerSideEncryption = aws.String(b.SSE)
+		copyInput.ServerSideEncryption = s3types.ServerSideEncryption(b.SSE)
 	}
 
-	_, err := b.Client.CopyObjectWithContext(ctx, copyInput)
+	_, err := b.Client.CopyObject(ctx, copyInput)
 	if err != nil {
 		return fmt.Errorf("failed to copy file from %s to %s: %w", fromPath, toPath, err)
 	}
@@ -238,7 +240,7 @@ func (b *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket 
 		Key:        aws.String(pathutil.Join(b.Prefix, dstPath)),
 	}
 
-	_, err := b.Client.CopyObjectWithContext(ctx, copyInput)
+	_, err := b.Client.CopyObject(ctx, copyInput)
 	if err != nil {
 		return fmt.Errorf("failed to copy object: %w", err)
 	}
@@ -249,7 +251,7 @@ func (b *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket 
 		Key:    aws.String(pathutil.Join(b.Prefix, srcPath)),
 	}
 
-	_, err = b.Client.DeleteObjectWithContext(ctx, deleteInput)
+	_, err = b.Client.DeleteObject(ctx, deleteInput)
 	if err != nil {
 		return fmt.Errorf("failed to delete object from source bucket: %w", err)
 	}
@@ -268,10 +270,10 @@ func (b *Backend) InitiateMultipartUpload(ctx context.Context, path string) (str
 	}
 
 	if b.SSE != "" {
-		input.ServerSideEncryption = aws.String(b.SSE)
+		input.ServerSideEncryption = s3types.ServerSideEncryption(b.SSE)
 	}
 
-	output, err := b.Client.CreateMultipartUploadWithContext(ctx, input)
+	output, err := b.Client.CreateMultipartUpload(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("failed to initiate multipart upload: %w", err)
 	}
@@ -280,37 +282,35 @@ func (b *Backend) InitiateMultipartUpload(ctx context.Context, path string) (str
 }
 
 // WriteMultipart writes a part of a multipart upload
-func (b *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+func (b *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	input := &s3.UploadPartInput{
 		Bucket:        aws.String(b.Bucket),
 		Key:           aws.String(pathutil.Join(b.Prefix, path)),
 		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int64(partNumber),
+		PartNumber:    aws.Int32(partNumber),
 		ContentLength: aws.Int64(size),
 		Body:          reader,
 	}
 
-	output, err := b.Client.UploadPartWithContext(ctx, input)
+	output, err := b.Client.UploadPart(ctx, input)
 	if err != nil {
 		return 0, nil, fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	completedPart := &types.CompletedPart{
+	return size, &types.CompletedPart{
 		ETag:       *output.ETag,
 		Size:       size,
 		PartNumber: partNumber,
-	}
-
-	return size, completedPart, nil
+	}, nil
 }
 
 // CompleteMultipartUpload completes a multipart upload
-func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
-	s3CompletedParts := make([]*s3.CompletedPart, len(completedParts))
+func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
+	s3CompletedParts := make([]s3types.CompletedPart, len(completedParts))
 	for i, part := range completedParts {
-		s3CompletedParts[i] = &s3.CompletedPart{
+		s3CompletedParts[i] = s3types.CompletedPart{
 			ETag:       aws.String(part.ETag),
-			PartNumber: aws.Int64(part.PartNumber),
+			PartNumber: aws.Int32(part.PartNumber),
 		}
 	}
 
@@ -318,12 +318,12 @@ func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID st
 		Bucket:   aws.String(b.Bucket),
 		Key:      aws.String(pathutil.Join(b.Prefix, path)),
 		UploadId: aws.String(uploadID),
-		MultipartUpload: &s3.CompletedMultipartUpload{
+		MultipartUpload: &s3types.CompletedMultipartUpload{
 			Parts: s3CompletedParts,
 		},
 	}
 
-	_, err := b.Client.CompleteMultipartUploadWithContext(ctx, input)
+	_, err := b.Client.CompleteMultipartUpload(ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to complete multipart upload: %w", err)
 	}
@@ -339,7 +339,7 @@ func (b *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID strin
 		UploadId: aws.String(uploadID),
 	}
 
-	_, err := b.Client.AbortMultipartUploadWithContext(ctx, input)
+	_, err := b.Client.AbortMultipartUpload(ctx, input)
 	if err != nil {
 		// AbortMultipartUpload is non-idempotent in s3, we need to omit `NoSuchUpload` error for compatibility.
 		// AWS S3 is inconsistent in its behavior, it returns 204 No Content within 24 hours and returns 404 Not Found after 24hours.

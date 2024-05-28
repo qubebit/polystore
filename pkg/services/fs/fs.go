@@ -203,11 +203,11 @@ func (fs *Backend) InitiateMultipartUpload(ctx context.Context, path string) (st
 	return "", fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 
-func (fs *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+func (fs *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	return size, nil, fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 
-func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
+func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
 	return fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 

@@ -34,7 +34,7 @@ type (
 	CompletedPart struct {
 		ETag       string `xml:"ETag" json:"ETag"`
 		Size       int64  `xml:"Size" json:"Size"`
-		PartNumber int64  `xml:"PartNumber" json:"PartNumber"`
+		PartNumber int32  `xml:"PartNumber" json:"PartNumber"`
 	}
 
 	// Backend is a generic interface for storage backends
@@ -47,8 +47,8 @@ type (
 		Move(ctx context.Context, fromPath string, toPath string) error
 		MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error
 		InitiateMultipartUpload(ctx context.Context, path string) (string, error)
-		WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
-		CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*CompletedPart) error
+		WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
+		CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []CompletedPart) error
 		AbortMultipartUpload(ctx context.Context, path, uploadID string) error
 	}
 )
