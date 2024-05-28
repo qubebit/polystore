@@ -37,11 +37,11 @@ func new(uri *url.URL) (types.Storage, error) {
 	return New(opts)
 }
 
-func New(opts Options) (types.Storage, error) {
+func New(opts Options) (*Backend, error) {
 	return &Backend{Root: opts.WorkingDir}, nil
 }
 
-func (fs *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types.Object, error) {
+func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, error) {
 	mu := fs.getMutexForPath(prefix)
 	mu.RLock()
 	defer mu.RUnlock()
@@ -72,7 +72,7 @@ func (fs *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types
 	return &objects, nil
 }
 
-func (fs *Backend) ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+func (fs *Backend) Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
@@ -114,7 +114,7 @@ func (fs *Backend) ReadWithContext(ctx context.Context, path string, start int64
 	return io.NopCloser(bytes.NewReader(buf)), nil
 }
 
-func (fs *Backend) StatWithContext(ctx context.Context, path string) (*types.Object, error) {
+func (fs *Backend) Stat(ctx context.Context, path string) (*types.Object, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
@@ -131,7 +131,7 @@ func (fs *Backend) StatWithContext(ctx context.Context, path string) (*types.Obj
 	}, nil
 }
 
-func (fs *Backend) WriteWithContext(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+func (fs *Backend) Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
 	mu := fs.getMutexForPath(path)
 	mu.Lock()
 	defer mu.Unlock()
@@ -150,7 +150,7 @@ func (fs *Backend) WriteWithContext(ctx context.Context, path string, reader io.
 	return io.Copy(file, reader)
 }
 
-func (fs *Backend) DeleteWithContext(ctx context.Context, path string) error {
+func (fs *Backend) Delete(ctx context.Context, path string) error {
 	mu := fs.getMutexForPath(path)
 	mu.Lock()
 	defer mu.Unlock()
@@ -159,7 +159,7 @@ func (fs *Backend) DeleteWithContext(ctx context.Context, path string) error {
 	return os.Remove(fullPath)
 }
 
-func (fs *Backend) MoveWithContext(ctx context.Context, fromPath string, toPath string) error {
+func (fs *Backend) Move(ctx context.Context, fromPath string, toPath string) error {
 	srcMutex := fs.getMutexForPath(fromPath)
 	dstMutex := fs.getMutexForPath(toPath)
 
@@ -179,7 +179,7 @@ func (fs *Backend) MoveWithContext(ctx context.Context, fromPath string, toPath 
 	return os.Rename(fromFullPath, toFullPath)
 }
 
-func (fs *Backend) MoveToBucketWithContext(ctx context.Context, srcPath, dstPath, dstBucket string) error {
+func (fs *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error {
 	srcMutex := fs.getMutexForPath(srcPath)
 	dstMutex := fs.getMutexForPath(dstPath)
 
@@ -199,19 +199,19 @@ func (fs *Backend) MoveToBucketWithContext(ctx context.Context, srcPath, dstPath
 	return os.Rename(srcFullPath, dstFullPath)
 }
 
-func (fs *Backend) InitiateMultipartUploadWithContext(ctx context.Context, path string) (string, error) {
+func (fs *Backend) InitiateMultipartUpload(ctx context.Context, path string) (string, error) {
 	return "", fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 
-func (fs *Backend) WriteMultipartWithContext(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+func (fs *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	return size, nil, fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 
-func (fs *Backend) CompleteMultipartUploadWithContext(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
+func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
 	return fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 
-func (fs *Backend) AbortMultipartUploadWithContext(ctx context.Context, path, uploadID string) error {
+func (fs *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
 	return fmt.Errorf("fileSystemBackend does not support multipart uploads")
 }
 

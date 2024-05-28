@@ -13,17 +13,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/backdrop-run/polystore/pkg/services"
-	"github.com/backdrop-run/polystore/pkg/types"
-
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/backdrop-run/polystore/pkg/helpers"
-
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/backdrop-run/polystore/pkg/services"
+	"github.com/backdrop-run/polystore/pkg/types"
 )
 
 type (
@@ -67,7 +65,7 @@ func new(uri *url.URL) (types.Storage, error) {
 	return New(opts)
 }
 
-func New(opts Options) (types.Storage, error) {
+func New(opts Options) (*Backend, error) {
 	credentials := NewCredentials(opts.AccessKey, opts.SecretKey)
 
 	client := http.DefaultClient
@@ -90,21 +88,20 @@ func New(opts Options) (types.Storage, error) {
 	}
 
 	service := s3.New(sess)
-	b := &Backend{
+	return &Backend{
 		Bucket:     opts.BucketName,
 		Client:     service,
 		Downloader: s3manager.NewDownloaderWithClient(service),
 		Prefix:     helpers.CleanPrefix(opts.Prefix),
 		Uploader:   s3manager.NewUploaderWithClient(service),
 		SSE:        opts.SSE,
-	}
-	return b, nil
+	}, nil
 }
 
-// ListObjects lists all objects in a S3 bucket, at prefix
+// List lists all objects in a S3 bucket, at prefix
 // Note: This function does not handle pagination and will return a maximum of 1000 objects.
 // If there are more than 1000 objects with the specified prefix, consider using pagination to retrieve all objects.
-func (b *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types.Object, error) {
+func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, error) {
 	var objects []types.Object
 	prefix = pathutil.Join(b.Prefix, prefix)
 	s3Input := &s3.ListObjectsV2Input{
@@ -132,8 +129,8 @@ func (b *Backend) ListWithContext(ctx context.Context, prefix string) (*[]types.
 	return &objects, nil
 }
 
-// ReadWithContext reads an object from S3 bucket, at given path
-func (b *Backend) ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+// Read reads an object from S3 bucket, at given path
+func (b *Backend) Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
 	rangeStr := fmt.Sprintf("bytes=%d-", start)
 	if end != 0 {
 		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
@@ -159,7 +156,7 @@ func (b *Backend) ReadWithContext(ctx context.Context, path string, start int64,
 }
 
 // Stat returns information about an object in a S3 bucket, at given path
-func (b *Backend) StatWithContext(ctx context.Context, path string) (*types.Object, error) {
+func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) {
 	s3Input := &s3.GetObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -176,12 +173,12 @@ func (b *Backend) StatWithContext(ctx context.Context, path string) (*types.Obje
 	}, nil
 }
 
-// WriteObject uploads an object to S3, intelligently buffering large
+// Write uploads an object to S3, intelligently buffering large
 // files into smaller chunks and sending them in parallel across multiple
 // goroutines.
 //
 // Always use this method if your full file is already on disk or in memory.
-func (b *Backend) WriteWithContext(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+func (b *Backend) Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
 	s3Input := &s3manager.UploadInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -196,8 +193,8 @@ func (b *Backend) WriteWithContext(ctx context.Context, path string, reader io.R
 	return size, err
 }
 
-// DeleteObject removes an object from a S3 bucket, at prefix
-func (b *Backend) DeleteWithContext(ctx context.Context, path string) error {
+// Delete removes an object from a S3 bucket, at prefix
+func (b *Backend) Delete(ctx context.Context, path string) error {
 	s3Input := &s3.DeleteObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -206,8 +203,8 @@ func (b *Backend) DeleteWithContext(ctx context.Context, path string) error {
 	return err
 }
 
-// MoveObject moves an object from one path to another within a S3 bucket
-func (b *Backend) MoveWithContext(ctx context.Context, fromPath string, toPath string) error {
+// Move moves an object from one path to another within a S3 bucket
+func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) error {
 	// First, copy the source file to the destination path
 	copyInput := &s3.CopyObjectInput{
 		Bucket:     aws.String(b.Bucket),
@@ -224,7 +221,7 @@ func (b *Backend) MoveWithContext(ctx context.Context, fromPath string, toPath s
 	}
 
 	// If the copy is successful, delete the source file
-	err = b.DeleteWithContext(ctx, fromPath)
+	err = b.Delete(ctx, fromPath)
 	if err != nil {
 		return fmt.Errorf("failed to delete source file %s after copying: %w", fromPath, err)
 	}
@@ -233,7 +230,7 @@ func (b *Backend) MoveWithContext(ctx context.Context, fromPath string, toPath s
 }
 
 // MoveToBucket moves an object from one S3 bucket to another
-func (b *Backend) MoveToBucketWithContext(ctx context.Context, srcPath, dstPath, dstBucket string) error {
+func (b *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error {
 	// Step 1: Copy the object to the destination bucket
 	copyInput := &s3.CopyObjectInput{
 		Bucket:     aws.String(dstBucket),
@@ -262,9 +259,9 @@ func (b *Backend) MoveToBucketWithContext(ctx context.Context, srcPath, dstPath,
 
 // InitiateMultipartUpload initiates a multipart upload.
 //
-// Use WriteWithContext over this method if the full file is already
+// Use Write over this method if the full file is already
 // on the local machine as it will do the multipart upload for you.
-func (b *Backend) InitiateMultipartUploadWithContext(ctx context.Context, path string) (string, error) {
+func (b *Backend) InitiateMultipartUpload(ctx context.Context, path string) (string, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -282,8 +279,8 @@ func (b *Backend) InitiateMultipartUploadWithContext(ctx context.Context, path s
 	return *output.UploadId, nil
 }
 
-// WriteMultipartWithContext writes a part of a multipart upload
-func (b *Backend) WriteMultipartWithContext(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+// WriteMultipart writes a part of a multipart upload
+func (b *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	input := &s3.UploadPartInput{
 		Bucket:        aws.String(b.Bucket),
 		Key:           aws.String(pathutil.Join(b.Prefix, path)),
@@ -308,7 +305,7 @@ func (b *Backend) WriteMultipartWithContext(ctx context.Context, path, uploadID 
 }
 
 // CompleteMultipartUpload completes a multipart upload
-func (b *Backend) CompleteMultipartUploadWithContext(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
+func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*types.CompletedPart) error {
 	s3CompletedParts := make([]*s3.CompletedPart, len(completedParts))
 	for i, part := range completedParts {
 		s3CompletedParts[i] = &s3.CompletedPart{
@@ -335,7 +332,7 @@ func (b *Backend) CompleteMultipartUploadWithContext(ctx context.Context, path, 
 }
 
 // AbortMultipartUpload aborts the multipart upload
-func (b *Backend) AbortMultipartUploadWithContext(ctx context.Context, path, uploadID string) error {
+func (b *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
 	input := &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(b.Bucket),
 		Key:      aws.String(pathutil.Join(b.Prefix, path)),

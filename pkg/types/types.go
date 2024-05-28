@@ -39,17 +39,17 @@ type (
 
 	// Backend is a generic interface for storage backends
 	Storage interface {
-		ListWithContext(ctx context.Context, prefix string) (*[]Object, error)
-		ReadWithContext(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
-		WriteWithContext(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
-		StatWithContext(ctx context.Context, path string) (*Object, error)
-		DeleteWithContext(ctx context.Context, path string) error
-		MoveWithContext(ctx context.Context, fromPath string, toPath string) error
-		MoveToBucketWithContext(ctx context.Context, srcPath, dstPath, dstBucket string) error
-		InitiateMultipartUploadWithContext(ctx context.Context, path string) (string, error)
-		WriteMultipartWithContext(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
-		CompleteMultipartUploadWithContext(ctx context.Context, path, uploadID string, completedParts []*CompletedPart) error
-		AbortMultipartUploadWithContext(ctx context.Context, path, uploadID string) error
+		List(ctx context.Context, prefix string) (*[]Object, error)
+		Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
+		Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
+		Stat(ctx context.Context, path string) (*Object, error)
+		Delete(ctx context.Context, path string) error
+		Move(ctx context.Context, fromPath string, toPath string) error
+		MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error
+		InitiateMultipartUpload(ctx context.Context, path string) (string, error)
+		WriteMultipart(ctx context.Context, path, uploadID string, partNumber int64, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
+		CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []*CompletedPart) error
+		AbortMultipartUpload(ctx context.Context, path, uploadID string) error
 	}
 )
 
