@@ -67,6 +67,7 @@ func new(uri *url.URL) (types.Storage, error) {
 	return New(opts)
 }
 
+// New creates a new S3 backend
 func New(opts Options) (*Backend, error) {
 	credentials := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""))
 
@@ -134,8 +135,8 @@ func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, err
 	return &objects, nil
 }
 
-// Download downloads an object from a S3 bucket, at given path
-func (b *Backend) Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+// Download downloads an object from S3 bucket, at given path
+func (b *Backend) Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error) {
 	rangeStr := fmt.Sprintf("bytes=%d-", start)
 	if end != 0 {
 		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
@@ -147,17 +148,17 @@ func (b *Backend) Download(ctx context.Context, path string, start int64, end in
 		Range:  aws.String(rangeStr),
 	}
 
-	s3Result, err := b.Client.GetObject(ctx, s3Input)
+	bytesDownloaded, err := b.Downloader.Download(ctx, writer, s3Input)
 	if err != nil {
-		awsErr, ok := err.(smithy.APIError)
-		if ok && awsErr.ErrorCode() == ErrCodeNoSuchKey {
-			return nil, fmt.Errorf("no such key %s: %w", path, err)
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchKey" {
+			return 0, fmt.Errorf("no such key %s: %w", path, err)
 		}
 
-		return nil, fmt.Errorf("failed to get object with context: %w", err)
+		return 0, fmt.Errorf("failed to download object: %w", err)
 	}
 
-	return s3Result.Body, nil
+	return bytesDownloaded, nil
 }
 
 // Stat returns information about an object in a S3 bucket, at given path
@@ -178,12 +179,9 @@ func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) 
 	}, nil
 }
 
-// Upload uploads an object to S3, intelligently buffering large
-// files into smaller chunks and sending them in parallel across multiple
-// goroutines.
-//
-// You should use this method most of the time, as it will handle large files for you.
-func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+// Upload uploads an object to a S3 bucket, at prefix.
+// Will intelligently buffering large files into smaller chunks and sending them in parallel across multiple goroutines
+func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader) error {
 	s3Input := &s3.PutObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -194,8 +192,11 @@ func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader, siz
 		s3Input.ServerSideEncryption = s3types.ServerSideEncryption(b.SSE)
 	}
 
-	_, err := b.Uploader.Upload(ctx, s3Input)
-	return size, err
+	if _, err := b.Uploader.Upload(ctx, s3Input); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // DeleteObject removes an object from a S3 bucket, at prefix
@@ -235,9 +236,6 @@ func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) erro
 }
 
 // CreateMultipartUpload initiates a multipart upload.
-//
-// Use Write over this method if the full file is already
-// on the local machine as it will do the multipart upload for you.
 func (b *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.Bucket),

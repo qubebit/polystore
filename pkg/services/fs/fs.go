@@ -1,8 +1,8 @@
 package fs
 
 import (
-	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -37,10 +37,12 @@ func new(uri *url.URL) (types.Storage, error) {
 	return New(opts)
 }
 
+// New creates a new filesystem backend
 func New(opts Options) (*Backend, error) {
 	return &Backend{Root: opts.WorkingDir}, nil
 }
 
+// List returns a list of objects in the specified directory
 func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, error) {
 	mu := fs.getMutexForPath(prefix)
 	mu.RLock()
@@ -72,7 +74,8 @@ func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, er
 	return &objects, nil
 }
 
-func (fs *Backend) Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+// Download reads a portion of a file and writes it to the provided writer
+func (fs *Backend) Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
@@ -80,40 +83,66 @@ func (fs *Backend) Download(ctx context.Context, path string, start int64, end i
 	fullPath := filepath.Join(fs.Root, path)
 	file, err := os.Open(fullPath)
 	if err != nil {
-		return nil, err
+		return 0, err
+	}
+	defer file.Close()
+
+	// Determine the file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	fileSize := fileInfo.Size()
+
+	// Adjust end if it's less than 0 or greater than file size
+	if end < 0 || end > fileSize {
+		end = fileSize
 	}
 
-	// Check for end < 0, if end is less than 0 we read till the end of the file
-	if end < 0 {
-		content, err := io.ReadAll(file)
-		if err != nil {
-			file.Close()
-			return nil, err
-		}
+	if start > fileSize {
+		return 0, fmt.Errorf("start position %d is beyond file size %d", start, fileSize)
+	}
 
-		// Convert read bytes to a reader and then to an io.ReadCloser
-		return io.NopCloser(bytes.NewReader(content[start:])), nil
+	// Calculate the number of bytes to read
+	length := end - start
+	if length < 0 {
+		return 0, fmt.Errorf("end position %d is before start position %d", end, start)
 	}
 
 	// Move to the start of the desired portion
 	_, err = file.Seek(start, 0)
 	if err != nil {
-		file.Close()
-		return nil, err
+		return 0, err
 	}
 
-	// Read the desired number of bytes (end-start)
-	buf := make([]byte, end-start)
-	_, err = file.Read(buf)
-	if err != nil {
-		file.Close()
-		return nil, err
+	// Read and write the desired number of bytes
+	buf := make([]byte, 4096)
+	var totalBytesWritten int64
+	for totalBytesWritten < length {
+		bytesToRead := int64(len(buf))
+		if length-totalBytesWritten < bytesToRead {
+			bytesToRead = length - totalBytesWritten
+		}
+
+		n, err := file.Read(buf[:bytesToRead])
+		if err != nil && err != io.EOF {
+			return totalBytesWritten, err
+		}
+		if n == 0 {
+			break
+		}
+
+		_, err = writer.WriteAt(buf[:n], start+totalBytesWritten)
+		if err != nil {
+			return totalBytesWritten, err
+		}
+		totalBytesWritten += int64(n)
 	}
 
-	// Convert read bytes to a reader and then to an io.ReadCloser
-	return io.NopCloser(bytes.NewReader(buf)), nil
+	return totalBytesWritten, nil
 }
 
+// Stat returns information about the object at the specified path
 func (fs *Backend) Stat(ctx context.Context, path string) (*types.Object, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
@@ -131,25 +160,31 @@ func (fs *Backend) Stat(ctx context.Context, path string) (*types.Object, error)
 	}, nil
 }
 
-func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+// Upload writes the contents of the reader to the specified path
+func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader) error {
 	mu := fs.getMutexForPath(path)
 	mu.Lock()
 	defer mu.Unlock()
 
 	fullPath := filepath.Join(fs.Root, path)
 	if err := os.MkdirAll(filepath.Dir(fullPath), os.ModePerm); err != nil {
-		return 0, err
+		return err
 	}
 
 	file, err := os.Create(fullPath)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer file.Close()
 
-	return io.Copy(file, reader)
+	if _, err := io.Copy(file, reader); err != nil {
+		return err
+	}
+
+	return nil
 }
 
+// Delete removes the object at the specified path
 func (fs *Backend) Delete(ctx context.Context, path string) error {
 	mu := fs.getMutexForPath(path)
 	mu.Lock()
@@ -179,22 +214,27 @@ func (fs *Backend) Move(ctx context.Context, fromPath string, toPath string) err
 	return os.Rename(fromFullPath, toFullPath)
 }
 
+// CreateMultipartUpload creates a new multipart upload session
 func (fs *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
 	return "", types.ErrNotSupportByBackend
 }
 
+// UploadPart writes a part of a multipart upload
 func (fs *Backend) UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	return size, nil, types.ErrNotSupportByBackend
 }
 
+// CompleteMultipartUpload finalizes a multipart upload session
 func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
 	return types.ErrNotSupportByBackend
 }
 
+// AbortMultipartUpload cancels a multipart upload session
 func (fs *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
 	return types.ErrNotSupportByBackend
 }
 
+// GeneratePresignedURL generates a URL that can be used to upload a part of a multipart upload
 func (fs *Backend) GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error) {
 	return "", types.ErrNotSupportByBackend
 }

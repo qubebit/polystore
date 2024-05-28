@@ -40,8 +40,8 @@ type (
 	// Backend is a generic interface for storage backends
 	Storage interface {
 		List(ctx context.Context, prefix string) (*[]Object, error)
-		Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
-		Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
+		Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error)
+		Upload(ctx context.Context, path string, reader io.Reader) error
 		Stat(ctx context.Context, path string) (*Object, error)
 		Delete(ctx context.Context, path string) error
 		Move(ctx context.Context, fromPath string, toPath string) error
