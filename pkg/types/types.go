@@ -40,16 +40,16 @@ type (
 	// Backend is a generic interface for storage backends
 	Storage interface {
 		List(ctx context.Context, prefix string) (*[]Object, error)
-		Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
-		Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
+		Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error)
+		Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error)
 		Stat(ctx context.Context, path string) (*Object, error)
 		Delete(ctx context.Context, path string) error
 		Move(ctx context.Context, fromPath string, toPath string) error
-		MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error
-		InitiateMultipartUpload(ctx context.Context, path string) (string, error)
-		WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
+		CreateMultipartUpload(ctx context.Context, path string) (string, error)
+		UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
 		CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []CompletedPart) error
 		AbortMultipartUpload(ctx context.Context, path, uploadID string) error
+		GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error)
 	}
 )
 

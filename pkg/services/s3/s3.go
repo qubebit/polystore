@@ -11,6 +11,7 @@ import (
 	"os"
 	pathutil "path"
 	"path/filepath"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -40,6 +41,7 @@ type (
 	Backend struct {
 		Bucket     string
 		Client     *s3.Client
+		Presign    *s3.PresignClient
 		Downloader *manager.Downloader
 		Prefix     string
 		Uploader   *manager.Uploader
@@ -93,6 +95,7 @@ func New(opts Options) (*Backend, error) {
 	return &Backend{
 		Bucket:     opts.BucketName,
 		Client:     service,
+		Presign:    s3.NewPresignClient(service),
 		Downloader: manager.NewDownloader(service),
 		Prefix:     helpers.CleanPrefix(opts.Prefix),
 		Uploader:   manager.NewUploader(service),
@@ -131,8 +134,8 @@ func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, err
 	return &objects, nil
 }
 
-// Read reads an object from S3 bucket, at given path
-func (b *Backend) Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+// Download downloads an object from a S3 bucket, at given path
+func (b *Backend) Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
 	rangeStr := fmt.Sprintf("bytes=%d-", start)
 	if end != 0 {
 		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
@@ -175,12 +178,12 @@ func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) 
 	}, nil
 }
 
-// Write uploads an object to S3, intelligently buffering large
+// Upload uploads an object to S3, intelligently buffering large
 // files into smaller chunks and sending them in parallel across multiple
 // goroutines.
 //
-// Always use this method if your full file is already on disk or in memory.
-func (b *Backend) Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+// You should use this method most of the time, as it will handle large files for you.
+func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
 	s3Input := &s3.PutObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -231,39 +234,11 @@ func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) erro
 	return nil
 }
 
-// MoveToBucket moves an object from one S3 bucket to another
-func (b *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error {
-	// Step 1: Copy the object to the destination bucket
-	copyInput := &s3.CopyObjectInput{
-		Bucket:     aws.String(dstBucket),
-		CopySource: aws.String(url.PathEscape(pathutil.Join(b.Bucket, b.Prefix, srcPath))),
-		Key:        aws.String(pathutil.Join(b.Prefix, dstPath)),
-	}
-
-	_, err := b.Client.CopyObject(ctx, copyInput)
-	if err != nil {
-		return fmt.Errorf("failed to copy object: %w", err)
-	}
-
-	// Step 2: Delete the object from the source bucket
-	deleteInput := &s3.DeleteObjectInput{
-		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, srcPath)),
-	}
-
-	_, err = b.Client.DeleteObject(ctx, deleteInput)
-	if err != nil {
-		return fmt.Errorf("failed to delete object from source bucket: %w", err)
-	}
-
-	return nil
-}
-
-// InitiateMultipartUpload initiates a multipart upload.
+// CreateMultipartUpload initiates a multipart upload.
 //
 // Use Write over this method if the full file is already
 // on the local machine as it will do the multipart upload for you.
-func (b *Backend) InitiateMultipartUpload(ctx context.Context, path string) (string, error) {
+func (b *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -281,8 +256,8 @@ func (b *Backend) InitiateMultipartUpload(ctx context.Context, path string) (str
 	return *output.UploadId, nil
 }
 
-// WriteMultipart writes a part of a multipart upload
-func (b *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+// UploadPart writes a part of a multipart upload
+func (b *Backend) UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
 	input := &s3.UploadPartInput{
 		Bucket:        aws.String(b.Bucket),
 		Key:           aws.String(pathutil.Join(b.Prefix, path)),
@@ -353,4 +328,45 @@ func (b *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID strin
 	}
 
 	return nil
+}
+
+// GeneratePresignedURL generates a presigned URL for an object in a S3 bucket
+func (b *Backend) GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error) {
+	if uploadID == "" {
+		return b.generatePresignedURL(ctx, path, expires)
+	}
+
+	return b.generatePresignedPartURL(ctx, path, uploadID, partNumber, expires)
+}
+
+// generatePresignedURL generates a presigned URL for an object in a S3 bucket
+func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires time.Duration) (string, error) {
+	req, err := b.Presign.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(b.Bucket),
+		Key:    aws.String(pathutil.Join(b.Prefix, path)),
+	}, func(o *s3.PresignOptions) {
+		o.Expires = expires
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return req.URL, nil
+}
+
+// generatePresignedPartURL generates a presigned URL for a part of a multipart upload
+func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, uploadID string, partNumber int32, expires time.Duration) (string, error) {
+	req, err := b.Presign.PresignUploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(b.Bucket),
+		Key:        aws.String(pathutil.Join(b.Prefix, path)),
+		PartNumber: aws.Int32(partNumber),
+		UploadId:   aws.String(uploadID),
+	}, func(o *s3.PresignOptions) {
+		o.Expires = expires
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return req.URL, nil
 }

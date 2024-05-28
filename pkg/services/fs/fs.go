@@ -3,12 +3,12 @@ package fs
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/backdrop-run/polystore/pkg/services"
 	"github.com/backdrop-run/polystore/pkg/types"
@@ -72,7 +72,7 @@ func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, er
 	return &objects, nil
 }
 
-func (fs *Backend) Read(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
+func (fs *Backend) Download(ctx context.Context, path string, start int64, end int64) (io.ReadCloser, error) {
 	mu := fs.getMutexForPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
@@ -131,7 +131,7 @@ func (fs *Backend) Stat(ctx context.Context, path string) (*types.Object, error)
 	}, nil
 }
 
-func (fs *Backend) Write(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
+func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader, size int64) (int64, error) {
 	mu := fs.getMutexForPath(path)
 	mu.Lock()
 	defer mu.Unlock()
@@ -179,40 +179,24 @@ func (fs *Backend) Move(ctx context.Context, fromPath string, toPath string) err
 	return os.Rename(fromFullPath, toFullPath)
 }
 
-func (fs *Backend) MoveToBucket(ctx context.Context, srcPath, dstPath, dstBucket string) error {
-	srcMutex := fs.getMutexForPath(srcPath)
-	dstMutex := fs.getMutexForPath(dstPath)
-
-	srcMutex.Lock()
-	defer srcMutex.Unlock()
-	dstMutex.Lock()
-	defer dstMutex.Unlock()
-
-	srcFullPath := filepath.Join(fs.Root, srcPath)
-	dstFullPath := filepath.Join(dstBucket, dstPath)
-
-	dir := filepath.Dir(dstFullPath)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-		return err
-	}
-
-	return os.Rename(srcFullPath, dstFullPath)
+func (fs *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
+	return "", types.ErrNotSupportByBackend
 }
 
-func (fs *Backend) InitiateMultipartUpload(ctx context.Context, path string) (string, error) {
-	return "", fmt.Errorf("fileSystemBackend does not support multipart uploads")
-}
-
-func (fs *Backend) WriteMultipart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
-	return size, nil, fmt.Errorf("fileSystemBackend does not support multipart uploads")
+func (fs *Backend) UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+	return size, nil, types.ErrNotSupportByBackend
 }
 
 func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
-	return fmt.Errorf("fileSystemBackend does not support multipart uploads")
+	return types.ErrNotSupportByBackend
 }
 
 func (fs *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
-	return fmt.Errorf("fileSystemBackend does not support multipart uploads")
+	return types.ErrNotSupportByBackend
+}
+
+func (fs *Backend) GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error) {
+	return "", types.ErrNotSupportByBackend
 }
 
 func (fs *Backend) getMutexForPath(path string) *sync.RWMutex {
