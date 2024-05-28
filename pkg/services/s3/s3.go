@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -104,15 +103,15 @@ func New(opts Options) (*Backend, error) {
 	}, nil
 }
 
-// List lists all objects in a S3 bucket, at prefix
+// List lists all objects in a S3 bucket, at path
 // Note: This function does not handle pagination and will return a maximum of 1000 objects.
-// If there are more than 1000 objects with the specified prefix, consider using pagination to retrieve all objects.
-func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, error) {
+// If there are more than 1000 objects with the specified path, consider using pagination to retrieve all objects.
+func (b *Backend) List(ctx context.Context, opts *types.ListOpts) (*types.ListResult, error) {
 	var objects []types.Object
-	prefix = pathutil.Join(b.Prefix, prefix)
+	path := pathutil.Join(b.Prefix, opts.Path)
 	s3Input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(b.Bucket),
-		Prefix: aws.String(prefix),
+		Prefix: aws.String(path),
 	}
 
 	s3Result, err := b.Client.ListObjectsV2(ctx, s3Input)
@@ -121,7 +120,7 @@ func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, err
 	}
 
 	for _, obj := range s3Result.Contents {
-		path := helpers.RemovePrefixFromObjectPath(prefix, *obj.Key)
+		path := helpers.RemovePrefixFromObjectPath(path, *obj.Key)
 		if helpers.ObjectPathIsInvalid(path) {
 			continue
 		}
@@ -132,40 +131,40 @@ func (b *Backend) List(ctx context.Context, prefix string) (*[]types.Object, err
 		objects = append(objects, object)
 	}
 
-	return &objects, nil
+	return &types.ListResult{Objects: objects}, nil
 }
 
 // Download downloads an object from S3 bucket, at given path
-func (b *Backend) Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error) {
-	rangeStr := fmt.Sprintf("bytes=%d-", start)
-	if end != 0 {
-		rangeStr = fmt.Sprintf("bytes=%d-%d", start, end)
+func (b *Backend) Download(ctx context.Context, opts *types.DownloadOpts) (*types.DownloadResult, error) {
+	rangeStr := fmt.Sprintf("bytes=%d-", opts.Start)
+	if opts.End != 0 {
+		rangeStr = fmt.Sprintf("bytes=%d-%d", opts.Start, opts.End)
 	}
 
 	s3Input := &s3.GetObjectInput{
 		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, path)),
+		Key:    aws.String(pathutil.Join(b.Prefix, opts.Path)),
 		Range:  aws.String(rangeStr),
 	}
 
-	bytesDownloaded, err := b.Downloader.Download(ctx, writer, s3Input)
+	bytesDownloaded, err := b.Downloader.Download(ctx, opts.Writer, s3Input)
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchKey" {
-			return 0, fmt.Errorf("no such key %s: %w", path, err)
+			return nil, fmt.Errorf("no such key %s: %w", opts.Path, err)
 		}
 
-		return 0, fmt.Errorf("failed to download object: %w", err)
+		return nil, fmt.Errorf("failed to download object: %w", err)
 	}
 
-	return bytesDownloaded, nil
+	return &types.DownloadResult{BytesWritten: bytesDownloaded}, nil
 }
 
 // Stat returns information about an object in a S3 bucket, at given path
-func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) {
+func (b *Backend) Stat(ctx context.Context, opts *types.StatOpts) (*types.StatResult, error) {
 	s3Input := &s3.GetObjectInput{
 		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, path)),
+		Key:    aws.String(pathutil.Join(b.Prefix, opts.Path)),
 	}
 
 	s3Result, err := b.Client.GetObject(ctx, s3Input)
@@ -173,19 +172,21 @@ func (b *Backend) Stat(ctx context.Context, path string) (*types.Object, error) 
 		return nil, err
 	}
 
-	return &types.Object{
-		Path:         path,
-		LastModified: *s3Result.LastModified,
+	return &types.StatResult{
+		Object: types.Object{
+			Path:         opts.Path,
+			LastModified: *s3Result.LastModified,
+		},
 	}, nil
 }
 
 // Upload uploads an object to a S3 bucket, at prefix.
 // Will intelligently buffering large files into smaller chunks and sending them in parallel across multiple goroutines
-func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader) error {
+func (b *Backend) Upload(ctx context.Context, opts *types.UploadOpts) error {
 	s3Input := &s3.PutObjectInput{
 		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, path)),
-		Body:   reader,
+		Key:    aws.String(pathutil.Join(b.Prefix, opts.Path)),
+		Body:   opts.Reader,
 	}
 
 	if b.SSE != "" {
@@ -200,22 +201,22 @@ func (b *Backend) Upload(ctx context.Context, path string, reader io.Reader) err
 }
 
 // DeleteObject removes an object from a S3 bucket, at prefix
-func (b *Backend) Delete(ctx context.Context, path string) error {
+func (b *Backend) Delete(ctx context.Context, opts *types.DeleteOpts) error {
 	s3Input := &s3.DeleteObjectInput{
 		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, path)),
+		Key:    aws.String(pathutil.Join(b.Prefix, opts.Path)),
 	}
 	_, err := b.Client.DeleteObject(ctx, s3Input)
 	return err
 }
 
 // MoveObject moves an object from one path to another within a S3 bucket
-func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) error {
+func (b *Backend) Move(ctx context.Context, opts *types.MoveOpts) error {
 	// First, copy the source file to the destination path
 	copyInput := &s3.CopyObjectInput{
 		Bucket:     aws.String(b.Bucket),
-		CopySource: aws.String(url.PathEscape(pathutil.Join(b.Bucket, b.Prefix, fromPath))),
-		Key:        aws.String(pathutil.Join(b.Prefix, toPath)),
+		CopySource: aws.String(url.PathEscape(pathutil.Join(b.Bucket, b.Prefix, opts.FromPath))),
+		Key:        aws.String(pathutil.Join(b.Prefix, opts.ToPath)),
 	}
 	if b.SSE != "" {
 		copyInput.ServerSideEncryption = s3types.ServerSideEncryption(b.SSE)
@@ -223,23 +224,25 @@ func (b *Backend) Move(ctx context.Context, fromPath string, toPath string) erro
 
 	_, err := b.Client.CopyObject(ctx, copyInput)
 	if err != nil {
-		return fmt.Errorf("failed to copy file from %s to %s: %w", fromPath, toPath, err)
+		return fmt.Errorf("failed to copy file from %s to %s: %w", opts.FromPath, opts.FromPath, err)
 	}
 
 	// If the copy is successful, delete the source file
-	err = b.Delete(ctx, fromPath)
+	err = b.Delete(ctx, &types.DeleteOpts{
+		Path: opts.FromPath,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to delete source file %s after copying: %w", fromPath, err)
+		return fmt.Errorf("failed to delete source file %s after copying: %w", opts.FromPath, err)
 	}
 
 	return nil
 }
 
 // CreateMultipartUpload initiates a multipart upload.
-func (b *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
+func (b *Backend) CreateMultipartUpload(ctx context.Context, opts *types.CreateMultipartUploadOpts) (*types.CreateMultipartUploadResult, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.Bucket),
-		Key:    aws.String(pathutil.Join(b.Prefix, path)),
+		Key:    aws.String(pathutil.Join(b.Prefix, opts.Path)),
 	}
 
 	if b.SSE != "" {
@@ -248,39 +251,43 @@ func (b *Backend) CreateMultipartUpload(ctx context.Context, path string) (strin
 
 	output, err := b.Client.CreateMultipartUpload(ctx, input)
 	if err != nil {
-		return "", fmt.Errorf("failed to initiate multipart upload: %w", err)
+		return nil, fmt.Errorf("failed to initiate multipart upload: %w", err)
 	}
 
-	return *output.UploadId, nil
+	return &types.CreateMultipartUploadResult{
+		UploadID: *output.UploadId,
+	}, nil
 }
 
 // UploadPart writes a part of a multipart upload
-func (b *Backend) UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
+func (b *Backend) UploadPart(ctx context.Context, opts *types.UploadPartOpts) (*types.UploadPartResult, error) {
 	input := &s3.UploadPartInput{
 		Bucket:        aws.String(b.Bucket),
-		Key:           aws.String(pathutil.Join(b.Prefix, path)),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(partNumber),
-		ContentLength: aws.Int64(size),
-		Body:          reader,
+		Key:           aws.String(pathutil.Join(b.Prefix, opts.Path)),
+		UploadId:      aws.String(opts.UploadID),
+		PartNumber:    aws.Int32(opts.PartNumber),
+		ContentLength: aws.Int64(opts.Size),
+		Body:          opts.Reader,
 	}
 
 	output, err := b.Client.UploadPart(ctx, input)
 	if err != nil {
-		return 0, nil, fmt.Errorf("failed to upload part: %w", err)
+		return nil, fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	return size, &types.CompletedPart{
-		ETag:       *output.ETag,
-		Size:       size,
-		PartNumber: partNumber,
+	return &types.UploadPartResult{
+		CompletedPart: types.CompletedPart{
+			ETag:       *output.ETag,
+			Size:       opts.Size,
+			PartNumber: opts.PartNumber,
+		},
 	}, nil
 }
 
 // CompleteMultipartUpload completes a multipart upload
-func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
-	s3CompletedParts := make([]s3types.CompletedPart, len(completedParts))
-	for i, part := range completedParts {
+func (b *Backend) CompleteMultipartUpload(ctx context.Context, opts *types.CompleteMultipartUploadOpts) error {
+	s3CompletedParts := make([]s3types.CompletedPart, len(opts.CompletedParts))
+	for i, part := range opts.CompletedParts {
 		s3CompletedParts[i] = s3types.CompletedPart{
 			ETag:       aws.String(part.ETag),
 			PartNumber: aws.Int32(part.PartNumber),
@@ -289,8 +296,8 @@ func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID st
 
 	input := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(b.Bucket),
-		Key:      aws.String(pathutil.Join(b.Prefix, path)),
-		UploadId: aws.String(uploadID),
+		Key:      aws.String(pathutil.Join(b.Prefix, opts.Path)),
+		UploadId: aws.String(opts.UploadID),
 		MultipartUpload: &s3types.CompletedMultipartUpload{
 			Parts: s3CompletedParts,
 		},
@@ -305,11 +312,11 @@ func (b *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID st
 }
 
 // AbortMultipartUpload aborts the multipart upload
-func (b *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
+func (b *Backend) AbortMultipartUpload(ctx context.Context, opts *types.AbortMultipartUploadOpts) error {
 	input := &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(b.Bucket),
-		Key:      aws.String(pathutil.Join(b.Prefix, path)),
-		UploadId: aws.String(uploadID),
+		Key:      aws.String(pathutil.Join(b.Prefix, opts.Path)),
+		UploadId: aws.String(opts.UploadID),
 	}
 
 	_, err := b.Client.AbortMultipartUpload(ctx, input)
@@ -329,16 +336,16 @@ func (b *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID strin
 }
 
 // GeneratePresignedURL generates a presigned URL for an object in a S3 bucket
-func (b *Backend) GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error) {
-	if uploadID == "" {
-		return b.generatePresignedURL(ctx, path, expires)
+func (b *Backend) GeneratePresignedURL(ctx context.Context, opts *types.GeneratePresignedURLOpts) (*types.GeneratePresignedURLResult, error) {
+	if opts.UploadID == "" {
+		return b.generatePresignedURL(ctx, opts.Path, opts.Expires)
 	}
 
-	return b.generatePresignedPartURL(ctx, path, uploadID, partNumber, expires)
+	return b.generatePresignedPartURL(ctx, opts.Path, opts.UploadID, opts.PartNumber, opts.Expires)
 }
 
 // generatePresignedURL generates a presigned URL for an object in a S3 bucket
-func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires time.Duration) (string, error) {
+func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires time.Duration) (*types.GeneratePresignedURLResult, error) {
 	req, err := b.Presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
@@ -346,14 +353,16 @@ func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires
 		o.Expires = expires
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return req.URL, nil
+	return &types.GeneratePresignedURLResult{
+		URL: req.URL,
+	}, nil
 }
 
 // generatePresignedPartURL generates a presigned URL for a part of a multipart upload
-func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, uploadID string, partNumber int32, expires time.Duration) (string, error) {
+func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, uploadID string, partNumber int32, expires time.Duration) (*types.GeneratePresignedURLResult, error) {
 	req, err := b.Presign.PresignUploadPart(ctx, &s3.UploadPartInput{
 		Bucket:     aws.String(b.Bucket),
 		Key:        aws.String(pathutil.Join(b.Prefix, path)),
@@ -363,8 +372,10 @@ func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, upl
 		o.Expires = expires
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return req.URL, nil
+	return &types.GeneratePresignedURLResult{
+		URL: req.URL,
+	}, nil
 }

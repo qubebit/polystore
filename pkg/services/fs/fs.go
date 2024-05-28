@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/backdrop-run/polystore/pkg/services"
 	"github.com/backdrop-run/polystore/pkg/types"
@@ -43,13 +42,13 @@ func New(opts Options) (*Backend, error) {
 }
 
 // List returns a list of objects in the specified directory
-func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, error) {
-	mu := fs.getMutexForPath(prefix)
+func (fs *Backend) List(ctx context.Context, opts *types.ListOpts) (*types.ListResult, error) {
+	mu := fs.getMutexForPath(opts.Path)
 	mu.RLock()
 	defer mu.RUnlock()
 
 	var objects []types.Object
-	fullPath := filepath.Join(fs.Root, prefix)
+	fullPath := filepath.Join(fs.Root, opts.Path)
 
 	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -71,48 +70,50 @@ func (fs *Backend) List(ctx context.Context, prefix string) (*[]types.Object, er
 	if err != nil {
 		return nil, err
 	}
-	return &objects, nil
+	return &types.ListResult{Objects: objects}, nil
 }
 
 // Download reads a portion of a file and writes it to the provided writer
-func (fs *Backend) Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error) {
-	mu := fs.getMutexForPath(path)
+func (fs *Backend) Download(ctx context.Context, opts *types.DownloadOpts) (*types.DownloadResult, error) {
+	mu := fs.getMutexForPath(opts.Path)
 	mu.RLock()
 	defer mu.RUnlock()
 
-	fullPath := filepath.Join(fs.Root, path)
+	fullPath := filepath.Join(fs.Root, opts.Path)
 	file, err := os.Open(fullPath)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer file.Close()
 
 	// Determine the file size
 	fileInfo, err := file.Stat()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	fileSize := fileInfo.Size()
 
 	// Adjust end if it's less than 0 or greater than file size
+	end := opts.End
 	if end < 0 || end > fileSize {
 		end = fileSize
 	}
 
+	start := opts.Start
 	if start > fileSize {
-		return 0, fmt.Errorf("start position %d is beyond file size %d", start, fileSize)
+		return nil, fmt.Errorf("start position %d is beyond file size %d", start, fileSize)
 	}
 
 	// Calculate the number of bytes to read
 	length := end - start
 	if length < 0 {
-		return 0, fmt.Errorf("end position %d is before start position %d", end, start)
+		return nil, fmt.Errorf("end position %d is before start position %d", end, start)
 	}
 
 	// Move to the start of the desired portion
 	_, err = file.Seek(start, 0)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	// Read and write the desired number of bytes
@@ -126,47 +127,55 @@ func (fs *Backend) Download(ctx context.Context, path string, writer io.WriterAt
 
 		n, err := file.Read(buf[:bytesToRead])
 		if err != nil && err != io.EOF {
-			return totalBytesWritten, err
+			return &types.DownloadResult{
+				BytesWritten: totalBytesWritten,
+			}, err
 		}
 		if n == 0 {
 			break
 		}
 
-		_, err = writer.WriteAt(buf[:n], start+totalBytesWritten)
+		_, err = opts.Writer.WriteAt(buf[:n], start+totalBytesWritten)
 		if err != nil {
-			return totalBytesWritten, err
+			return &types.DownloadResult{
+				BytesWritten: totalBytesWritten,
+			}, err
 		}
 		totalBytesWritten += int64(n)
 	}
 
-	return totalBytesWritten, nil
+	return &types.DownloadResult{
+		BytesWritten: totalBytesWritten,
+	}, err
 }
 
 // Stat returns information about the object at the specified path
-func (fs *Backend) Stat(ctx context.Context, path string) (*types.Object, error) {
-	mu := fs.getMutexForPath(path)
+func (fs *Backend) Stat(ctx context.Context, opts *types.StatOpts) (*types.StatResult, error) {
+	mu := fs.getMutexForPath(opts.Path)
 	mu.RLock()
 	defer mu.RUnlock()
 
-	fullPath := filepath.Join(fs.Root, path)
+	fullPath := filepath.Join(fs.Root, opts.Path)
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		return nil, err
 	}
 
-	return &types.Object{
-		Path:         path,
-		LastModified: info.ModTime(),
+	return &types.StatResult{
+		Object: types.Object{
+			Path:         opts.Path,
+			LastModified: info.ModTime(),
+		},
 	}, nil
 }
 
 // Upload writes the contents of the reader to the specified path
-func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader) error {
-	mu := fs.getMutexForPath(path)
+func (fs *Backend) Upload(ctx context.Context, opts *types.UploadOpts) error {
+	mu := fs.getMutexForPath(opts.Path)
 	mu.Lock()
 	defer mu.Unlock()
 
-	fullPath := filepath.Join(fs.Root, path)
+	fullPath := filepath.Join(fs.Root, opts.Path)
 	if err := os.MkdirAll(filepath.Dir(fullPath), os.ModePerm); err != nil {
 		return err
 	}
@@ -177,7 +186,7 @@ func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader) er
 	}
 	defer file.Close()
 
-	if _, err := io.Copy(file, reader); err != nil {
+	if _, err := io.Copy(file, opts.Reader); err != nil {
 		return err
 	}
 
@@ -185,26 +194,26 @@ func (fs *Backend) Upload(ctx context.Context, path string, reader io.Reader) er
 }
 
 // Delete removes the object at the specified path
-func (fs *Backend) Delete(ctx context.Context, path string) error {
-	mu := fs.getMutexForPath(path)
+func (fs *Backend) Delete(ctx context.Context, opts *types.DeleteOpts) error {
+	mu := fs.getMutexForPath(opts.Path)
 	mu.Lock()
 	defer mu.Unlock()
 
-	fullPath := filepath.Join(fs.Root, path)
+	fullPath := filepath.Join(fs.Root, opts.Path)
 	return os.Remove(fullPath)
 }
 
-func (fs *Backend) Move(ctx context.Context, fromPath string, toPath string) error {
-	srcMutex := fs.getMutexForPath(fromPath)
-	dstMutex := fs.getMutexForPath(toPath)
+func (fs *Backend) Move(ctx context.Context, opts *types.MoveOpts) error {
+	srcMutex := fs.getMutexForPath(opts.FromPath)
+	dstMutex := fs.getMutexForPath(opts.ToPath)
 
 	srcMutex.Lock()
 	defer srcMutex.Unlock()
 	dstMutex.Lock()
 	defer dstMutex.Unlock()
 
-	fromFullPath := filepath.Join(fs.Root, fromPath)
-	toFullPath := filepath.Join(fs.Root, toPath)
+	fromFullPath := filepath.Join(fs.Root, opts.FromPath)
+	toFullPath := filepath.Join(fs.Root, opts.ToPath)
 
 	dir := filepath.Dir(toFullPath)
 	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
@@ -215,28 +224,28 @@ func (fs *Backend) Move(ctx context.Context, fromPath string, toPath string) err
 }
 
 // CreateMultipartUpload creates a new multipart upload session
-func (fs *Backend) CreateMultipartUpload(ctx context.Context, path string) (string, error) {
-	return "", types.ErrNotSupportByBackend
+func (fs *Backend) CreateMultipartUpload(ctx context.Context, opts *types.CreateMultipartUploadOpts) (*types.CreateMultipartUploadResult, error) {
+	return nil, types.ErrNotSupportByBackend
 }
 
 // UploadPart writes a part of a multipart upload
-func (fs *Backend) UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *types.CompletedPart, error) {
-	return size, nil, types.ErrNotSupportByBackend
+func (fs *Backend) UploadPart(ctx context.Context, opts *types.UploadPartOpts) (*types.UploadPartResult, error) {
+	return nil, types.ErrNotSupportByBackend
 }
 
 // CompleteMultipartUpload finalizes a multipart upload session
-func (fs *Backend) CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []types.CompletedPart) error {
+func (fs *Backend) CompleteMultipartUpload(ctx context.Context, opts *types.CompleteMultipartUploadOpts) error {
 	return types.ErrNotSupportByBackend
 }
 
 // AbortMultipartUpload cancels a multipart upload session
-func (fs *Backend) AbortMultipartUpload(ctx context.Context, path, uploadID string) error {
+func (fs *Backend) AbortMultipartUpload(ctx context.Context, opts *types.AbortMultipartUploadOpts) error {
 	return types.ErrNotSupportByBackend
 }
 
 // GeneratePresignedURL generates a URL that can be used to upload a part of a multipart upload
-func (fs *Backend) GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error) {
-	return "", types.ErrNotSupportByBackend
+func (fs *Backend) GeneratePresignedURL(ctx context.Context, opts *types.GeneratePresignedURLOpts) (*types.GeneratePresignedURLResult, error) {
+	return nil, types.ErrNotSupportByBackend
 }
 
 func (fs *Backend) getMutexForPath(path string) *sync.RWMutex {

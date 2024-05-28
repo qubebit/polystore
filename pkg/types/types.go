@@ -31,25 +31,109 @@ type (
 		Updated []Object
 	}
 
+	// CompletedPart represents a part that has been uploaded
 	CompletedPart struct {
 		ETag       string `xml:"ETag" json:"ETag"`
 		Size       int64  `xml:"Size" json:"Size"`
 		PartNumber int32  `xml:"PartNumber" json:"PartNumber"`
 	}
 
-	// Backend is a generic interface for storage backends
+	ListOpts struct {
+		Path string
+	}
+
+	ListResult struct {
+		Objects []Object
+	}
+
+	DownloadOpts struct {
+		Path   string
+		Writer io.WriterAt
+		Start  int64
+		End    int64
+	}
+
+	DownloadResult struct {
+		BytesWritten int64
+	}
+
+	UploadOpts struct {
+		Path   string
+		Reader io.Reader
+	}
+
+	StatOpts struct {
+		Path string
+	}
+
+	StatResult struct {
+		Object Object
+	}
+
+	DeleteOpts struct {
+		Path string
+	}
+
+	MoveOpts struct {
+		FromPath string
+		ToPath   string
+	}
+
+	CreateMultipartUploadOpts struct {
+		Path string
+	}
+
+	CreateMultipartUploadResult struct {
+		UploadID string
+	}
+
+	UploadPartOpts struct {
+		Path       string
+		UploadID   string
+		PartNumber int32
+		Reader     io.ReadSeeker
+		Size       int64
+	}
+
+	UploadPartResult struct {
+		CompletedPart CompletedPart
+	}
+
+	CompleteMultipartUploadOpts struct {
+		Path           string
+		UploadID       string
+		CompletedParts []CompletedPart
+	}
+
+	AbortMultipartUploadOpts struct {
+		Path     string
+		UploadID string
+	}
+
+	GeneratePresignedURLOpts struct {
+		Path       string
+		Expires    time.Duration
+		UploadID   string
+		PartNumber int32
+	}
+
+	GeneratePresignedURLResult struct {
+		URL string
+	}
+
+	// Storage is a generic interface for storage backends
 	Storage interface {
-		List(ctx context.Context, prefix string) (*[]Object, error)
-		Download(ctx context.Context, path string, writer io.WriterAt, start int64, end int64) (int64, error)
-		Upload(ctx context.Context, path string, reader io.Reader) error
-		Stat(ctx context.Context, path string) (*Object, error)
-		Delete(ctx context.Context, path string) error
-		Move(ctx context.Context, fromPath string, toPath string) error
-		CreateMultipartUpload(ctx context.Context, path string) (string, error)
-		UploadPart(ctx context.Context, path, uploadID string, partNumber int32, reader io.ReadSeeker, size int64) (int64, *CompletedPart, error)
-		CompleteMultipartUpload(ctx context.Context, path, uploadID string, completedParts []CompletedPart) error
-		AbortMultipartUpload(ctx context.Context, path, uploadID string) error
-		GeneratePresignedURL(ctx context.Context, path string, expires time.Duration, uploadID string, partNumber int32) (string, error)
+		List(ctx context.Context, opts *ListOpts) (*ListResult, error)
+		Download(ctx context.Context, opts *DownloadOpts) (*DownloadResult, error)
+		Upload(ctx context.Context, opts *UploadOpts) error
+		Stat(ctx context.Context, opts *StatOpts) (*StatResult, error)
+		Delete(ctx context.Context, opts *DeleteOpts) error
+		Move(ctx context.Context, opts *MoveOpts) error
+		CreateMultipartUpload(ctx context.Context, opts *CreateMultipartUploadOpts) (*CreateMultipartUploadResult, error)
+		UploadPart(ctx context.Context, opts *UploadPartOpts) (*UploadPartResult, error)
+		CompleteMultipartUpload(ctx context.Context, opts *CompleteMultipartUploadOpts) error
+		AbortMultipartUpload(ctx context.Context, opts *AbortMultipartUploadOpts) error
+		GeneratePresignedURL(ctx context.Context, opts *GeneratePresignedURLOpts) (*GeneratePresignedURLResult, error)
 	}
 )
 
