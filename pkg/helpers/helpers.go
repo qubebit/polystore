@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowshot-io/polystore/pkg/types"
+	"github.com/backdrop-run/polystore/pkg/types"
 )
 
 // GetObjectSliceDiff takes two objects slices and returns an ObjectSliceDiff

@@ -1,4 +1,4 @@
-module github.com/flowshot-io/polystore
+module github.com/backdrop-run/polystore
 
 go 1.19
 

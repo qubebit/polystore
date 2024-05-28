@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/url"
 
-	"github.com/flowshot-io/polystore/pkg/types"
+	"github.com/backdrop-run/polystore/pkg/types"
 )
 
 var (

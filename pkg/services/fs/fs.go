@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/flowshot-io/polystore/pkg/services"
-	"github.com/flowshot-io/polystore/pkg/types"
+	"github.com/backdrop-run/polystore/pkg/services"
+	"github.com/backdrop-run/polystore/pkg/types"
 )
 
 type (
