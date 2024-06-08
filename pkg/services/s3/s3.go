@@ -34,6 +34,7 @@ type (
 		SecretKey  string
 		BucketName string
 		SSE        string
+		PathStyle  bool
 	}
 
 	// Backend is a storage backend for S3
@@ -61,6 +62,7 @@ func new(uri *url.URL) (types.Storage, error) {
 		SecretKey:  uri.Query().Get("secretKey"),
 		BucketName: uri.Host,
 		SSE:        uri.Query().Get("sse"),
+		PathStyle:  uri.Query().Get("pathStyle") == "true",
 	}
 
 	return New(opts)
@@ -91,7 +93,9 @@ func New(opts Options) (*Backend, error) {
 		return nil, err
 	}
 
-	service := s3.NewFromConfig(cfg)
+	service := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = opts.PathStyle
+	})
 	return &Backend{
 		Bucket:     opts.BucketName,
 		Client:     service,

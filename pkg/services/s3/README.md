@@ -11,11 +11,12 @@ To use the S3 backend, you need to specify the following options in your connect
 - `accessKey`: Your AWS access key.
 - `secretKey`: Your AWS secret key.
 - `sse`: Server Side Encryption setting.
+- `pathStyle`: Whether to use path-style URLs.
 
 A connection string for the S3 backend looks like this:
 
 ```
-s3://myBucketName/my/prefix?region=region&accessKey=accessKey&secretKey=secretKey&sse=sse
+s3://myBucketName/my/prefix?region=region&accessKey=accessKey&secretKey=secretKey&sse=sse&pathStyle=true
 ```
 
 Replace `myBucketName/my/prefix`, `region`, `accessKey`, `secretKey`, and `sse` with your actual parameters.
