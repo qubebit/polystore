@@ -339,18 +339,18 @@ func (b *Backend) AbortMultipartUpload(ctx context.Context, opts *types.AbortMul
 	return nil
 }
 
-// GeneratePresignedURL generates a presigned URL for an object in a S3 bucket
-func (b *Backend) GeneratePresignedURL(ctx context.Context, opts *types.GeneratePresignedURLOpts) (*types.GeneratePresignedURLResult, error) {
+// GeneratePresignedUploadURL generates a presigned upload URL for an object in a S3 bucket
+func (b *Backend) GeneratePresignedUploadURL(ctx context.Context, opts *types.GeneratePresignedUploadURLOpts) (*types.GeneratePresignedUploadURLResult, error) {
 	if opts.UploadID == "" {
-		return b.generatePresignedURL(ctx, opts.Path, opts.Expires)
+		return b.generatePresignedUploadURL(ctx, opts.Path, opts.Expires)
 	}
 
-	return b.generatePresignedPartURL(ctx, opts.Path, opts.UploadID, opts.PartNumber, opts.Expires)
+	return b.generatePresignedUploadPartURL(ctx, opts.Path, opts.UploadID, opts.PartNumber, opts.Expires)
 }
 
-// generatePresignedURL generates a presigned URL for an object in a S3 bucket
-func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires time.Duration) (*types.GeneratePresignedURLResult, error) {
-	req, err := b.Presign.PresignGetObject(ctx, &s3.GetObjectInput{
+// generatePresignedUploadURL generates a presigned upload URL for an object in a S3 bucket
+func (b *Backend) generatePresignedUploadURL(ctx context.Context, path string, expires time.Duration) (*types.GeneratePresignedUploadURLResult, error) {
+	req, err := b.Presign.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(b.Bucket),
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
 	}, func(o *s3.PresignOptions) {
@@ -360,13 +360,13 @@ func (b *Backend) generatePresignedURL(ctx context.Context, path string, expires
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return &types.GeneratePresignedURLResult{
+	return &types.GeneratePresignedUploadURLResult{
 		URL: req.URL,
 	}, nil
 }
 
-// generatePresignedPartURL generates a presigned URL for a part of a multipart upload
-func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, uploadID string, partNumber int32, expires time.Duration) (*types.GeneratePresignedURLResult, error) {
+// generatePresignedUploadPartURL generates a presigned URL for a part of a multipart upload
+func (b *Backend) generatePresignedUploadPartURL(ctx context.Context, path string, uploadID string, partNumber int32, expires time.Duration) (*types.GeneratePresignedUploadURLResult, error) {
 	req, err := b.Presign.PresignUploadPart(ctx, &s3.UploadPartInput{
 		Bucket:     aws.String(b.Bucket),
 		Key:        aws.String(pathutil.Join(b.Prefix, path)),
@@ -379,7 +379,7 @@ func (b *Backend) generatePresignedPartURL(ctx context.Context, path string, upl
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return &types.GeneratePresignedURLResult{
+	return &types.GeneratePresignedUploadURLResult{
 		URL: req.URL,
 	}, nil
 }

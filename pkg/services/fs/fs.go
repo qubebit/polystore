@@ -243,8 +243,8 @@ func (fs *Backend) AbortMultipartUpload(ctx context.Context, opts *types.AbortMu
 	return types.ErrNotSupportByBackend
 }
 
-// GeneratePresignedURL generates a URL that can be used to upload a part of a multipart upload
-func (fs *Backend) GeneratePresignedURL(ctx context.Context, opts *types.GeneratePresignedURLOpts) (*types.GeneratePresignedURLResult, error) {
+// GeneratePresignedUploadURL generates a URL that can be used to upload a part of a multipart upload
+func (fs *Backend) GeneratePresignedUploadURL(ctx context.Context, opts *types.GeneratePresignedUploadURLOpts) (*types.GeneratePresignedUploadURLResult, error) {
 	return nil, types.ErrNotSupportByBackend
 }
 

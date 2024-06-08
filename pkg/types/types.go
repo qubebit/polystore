@@ -110,14 +110,14 @@ type (
 		UploadID string
 	}
 
-	GeneratePresignedURLOpts struct {
+	GeneratePresignedUploadURLOpts struct {
 		Path       string
 		Expires    time.Duration
 		UploadID   string
 		PartNumber int32
 	}
 
-	GeneratePresignedURLResult struct {
+	GeneratePresignedUploadURLResult struct {
 		URL string
 	}
 
@@ -133,7 +133,7 @@ type (
 		UploadPart(ctx context.Context, opts *UploadPartOpts) (*UploadPartResult, error)
 		CompleteMultipartUpload(ctx context.Context, opts *CompleteMultipartUploadOpts) error
 		AbortMultipartUpload(ctx context.Context, opts *AbortMultipartUploadOpts) error
-		GeneratePresignedURL(ctx context.Context, opts *GeneratePresignedURLOpts) (*GeneratePresignedURLResult, error)
+		GeneratePresignedUploadURL(ctx context.Context, opts *GeneratePresignedUploadURLOpts) (*GeneratePresignedUploadURLResult, error)
 	}
 )
 
