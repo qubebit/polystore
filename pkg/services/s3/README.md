@@ -12,6 +12,7 @@ To use the S3 backend, you need to specify the following options in your connect
 - `secretKey`: Your AWS secret key.
 - `sse`: Server Side Encryption setting.
 - `pathStyle`: Whether to use path-style URLs.
+- `accelerate`: Whether to use S3 Transfer Acceleration.
 
 A connection string for the S3 backend looks like this:
 

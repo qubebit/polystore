@@ -27,25 +27,27 @@ import (
 type (
 	// Options is a struct for S3 options
 	Options struct {
-		Endpoint   string
-		Prefix     string
-		Region     string
-		AccessKey  string
-		SecretKey  string
-		BucketName string
-		SSE        string
-		PathStyle  bool
+		Endpoint      string
+		Prefix        string
+		Region        string
+		AccessKey     string
+		SecretKey     string
+		BucketName    string
+		SSE           string
+		PathStyle     bool
+		UseAccelerate bool
 	}
 
 	// Backend is a storage backend for S3
 	Backend struct {
-		Bucket     string
-		Client     *s3.Client
-		Presign    *s3.PresignClient
-		Downloader *manager.Downloader
-		Prefix     string
-		Uploader   *manager.Uploader
-		SSE        string
+		Bucket        string
+		Client        *s3.Client
+		Presign       *s3.PresignClient
+		Downloader    *manager.Downloader
+		Prefix        string
+		Uploader      *manager.Uploader
+		SSE           string
+		UseAccelerate bool
 	}
 )
 
@@ -55,14 +57,15 @@ func init() {
 
 func new(uri *url.URL) (types.Storage, error) {
 	opts := Options{
-		Endpoint:   uri.Query().Get("endpoint"),
-		Prefix:     filepath.Clean(uri.Path),
-		Region:     uri.Query().Get("region"),
-		AccessKey:  uri.Query().Get("accessKey"),
-		SecretKey:  uri.Query().Get("secretKey"),
-		BucketName: uri.Host,
-		SSE:        uri.Query().Get("sse"),
-		PathStyle:  uri.Query().Get("pathStyle") == "true",
+		Endpoint:      uri.Query().Get("endpoint"),
+		Prefix:        filepath.Clean(uri.Path),
+		Region:        uri.Query().Get("region"),
+		AccessKey:     uri.Query().Get("accessKey"),
+		SecretKey:     uri.Query().Get("secretKey"),
+		BucketName:    uri.Host,
+		SSE:           uri.Query().Get("sse"),
+		PathStyle:     uri.Query().Get("pathStyle") == "true",
+		UseAccelerate: uri.Query().Get("accelerate") == "true",
 	}
 
 	return New(opts)
@@ -97,13 +100,14 @@ func New(opts Options) (*Backend, error) {
 		o.UsePathStyle = opts.PathStyle
 	})
 	return &Backend{
-		Bucket:     opts.BucketName,
-		Client:     service,
-		Presign:    s3.NewPresignClient(service),
-		Downloader: manager.NewDownloader(service),
-		Prefix:     helpers.CleanPrefix(opts.Prefix),
-		Uploader:   manager.NewUploader(service),
-		SSE:        opts.SSE,
+		Bucket:        opts.BucketName,
+		Client:        service,
+		Presign:       s3.NewPresignClient(service),
+		Downloader:    manager.NewDownloader(service),
+		Prefix:        helpers.CleanPrefix(opts.Prefix),
+		Uploader:      manager.NewUploader(service),
+		SSE:           opts.SSE,
+		UseAccelerate: opts.UseAccelerate,
 	}, nil
 }
 
@@ -355,6 +359,9 @@ func (b *Backend) generatePresignedUploadURL(ctx context.Context, path string, e
 		Key:    aws.String(pathutil.Join(b.Prefix, path)),
 	}, func(o *s3.PresignOptions) {
 		o.Expires = expires
+		o.ClientOptions = append(o.ClientOptions, func(options *s3.Options) {
+			options.UseAccelerate = b.UseAccelerate
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
@@ -374,6 +381,9 @@ func (b *Backend) generatePresignedUploadPartURL(ctx context.Context, path strin
 		UploadId:   aws.String(uploadID),
 	}, func(o *s3.PresignOptions) {
 		o.Expires = expires
+		o.ClientOptions = append(o.ClientOptions, func(options *s3.Options) {
+			options.UseAccelerate = b.UseAccelerate
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
