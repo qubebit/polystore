@@ -1,4 +1,4 @@
-PKG := "github.com/backdrop-run/polystore"
+PKG := "github.com/qubebit/polystore"
 PKG_LIST := $(shell go list ${PKG}/...)
 
 .DEFAULT_GOAL := check

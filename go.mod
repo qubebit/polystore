@@ -1,4 +1,4 @@
-module github.com/backdrop-run/polystore
+module github.com/qubebit/polystore
 
 go 1.19
 

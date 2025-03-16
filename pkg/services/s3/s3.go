@@ -19,9 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/backdrop-run/polystore/pkg/helpers"
-	"github.com/backdrop-run/polystore/pkg/services"
-	"github.com/backdrop-run/polystore/pkg/types"
+	"github.com/qubebit/polystore/pkg/helpers"
+	"github.com/qubebit/polystore/pkg/services"
+	"github.com/qubebit/polystore/pkg/types"
 )
 
 type (

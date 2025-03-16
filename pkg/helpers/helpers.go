@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/backdrop-run/polystore/pkg/types"
+	"github.com/qubebit/polystore/pkg/types"
 )
 
 // GetObjectSliceDiff takes two objects slices and returns an ObjectSliceDiff

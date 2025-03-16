@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/url"
 
-	"github.com/backdrop-run/polystore/pkg/types"
+	"github.com/qubebit/polystore/pkg/types"
 )
 
 var (

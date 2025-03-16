@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/backdrop-run/polystore/pkg/services"
-	"github.com/backdrop-run/polystore/pkg/types"
+	"github.com/qubebit/polystore/pkg/services"
+	"github.com/qubebit/polystore/pkg/types"
 )
 
 type (
